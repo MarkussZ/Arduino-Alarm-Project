@@ -1,0 +1,240 @@
+#include <LiquidCrystal.h>
+LiquidCrystal lcd(A0, A1, A2, A3, A4, A5); // LCD pins
+#include <Keypad.h>
+
+String pad;
+String password = "1111"; // set password
+char keypressed;
+const byte ROWS = 4; //four rows
+const byte COLS = 4; //four columns
+
+const int LED_G = 3; //assign pin numbers
+const int button = 7;
+const int trigger = 13;
+const int echo = 12;
+const int buzzer = 8;
+const int LED_R = 2;
+const int buttonPan = 9;
+const int LED_B = 4;
+const int waterPin = A8;
+
+char hexaKeys[ROWS][COLS] = { //assign keypad buttons
+  {'1','2','3','A'},
+  {'4','5','6','B'},
+  {'7','8','9','C'},
+  {'*','0','#','D'}
+};
+
+byte rowPins[ROWS] = {23, 25, 27, 29}; //connect to the row pinouts of the keypad
+byte colPins[COLS] = {31, 33, 35, 37}; //connect to the column pinouts of the keypad
+
+Keypad myKeypad = Keypad( makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS); 
+
+long duration;
+int dis;
+int safeDis;
+int waterLvl = 0;
+
+byte lastButtonState;
+byte lastButtonPState;
+byte ledState = LOW;
+byte ledStateP = LOW;
+
+unsigned long lastTimeButtonChange = millis (); //record button state times
+unsigned long lastTimeButtonPChange = millis ();
+unsigned long debounceDur = 50; //delay to compenstate for button bounce
+
+
+void setup() {
+  lcd.print("Hello"); //test lcd screen
+  delay(1000);
+  lcd.clear();
+  lcd.print("Type Passcode");
+  delay(1000);
+  lcd.clear();
+  pinMode(LED_G, OUTPUT); //assign inputs and outputs
+  pinMode(LED_R, OUTPUT);
+  pinMode(LED_B, OUTPUT);
+  pinMode(button, INPUT);
+  pinMode(buttonPan, INPUT);
+  lastButtonState = digitalRead(button);
+  lastButtonPState = digitalRead(buttonPan);
+  pinMode(trigger, OUTPUT);
+  pinMode(echo, INPUT);
+  pinMode(buzzer, OUTPUT);
+  Serial.begin(9600);
+}
+
+void loop() {
+  panic();
+   if (keypressed == '*') { //clear passcode selection
+    pad = "";
+    lcd.clear();
+  }
+  lcd.setCursor(0, 0);
+  lcd.print(pad); //print pad inputs
+  delay(100);
+  readKeypad();
+    if (keypressed == '#') { //confirm passcode selection
+      if (pad == password) {
+        pad = "";
+        lcd.setCursor(0, 0);
+        lcd.print("Access Granted"); // display message for succesfull entry
+        Serial.println("Access Granted");
+        delay(2000);
+        lcd.clear();
+      } 
+      else {
+        pad = "";
+        lcd.setCursor(0, 0);
+        lcd.print("Access Denied"); //display message for failed entry
+        Serial.println("Access Denied");
+        delay(2000);
+        lcd.clear();
+        lcd.print("Try Again");
+        Serial.println("Try Again");
+        delay(2000);
+        lcd.clear();
+      }
+    }
+    entryExit();
+    leakCheck();
+}
+
+void panic() {
+  if (ledStateP == HIGH) { // emergency if blue LED on
+    digitalWrite(buzzer, HIGH);
+    digitalWrite(LED_R, HIGH);
+    lcd.print("EMERGENCY"); // LCD display for emergency button
+    Serial.println("Emergency");
+  }
+  else {
+    lcd.clear(); // clear when blue LED off
+  }
+  if (millis() -lastTimeButtonPChange >= debounceDur) { //button read after 50ms passed
+    byte buttonPState = digitalRead(buttonPan); // read panic button
+    if (buttonPState != lastButtonPState) { //check for change in button state
+      lastTimeButtonPChange = millis();
+      lastButtonPState = buttonPState; //button state equal to current button state
+      if (buttonPState == LOW) {
+        if(ledStateP == HIGH) { //change LED state when button pressed
+          ledStateP = LOW;
+        }
+        else {
+          ledStateP = HIGH;
+        }
+        digitalWrite(LED_B, ledStateP); //change blue LED's state
+      }
+    }
+  }
+}
+
+void entryExit() {
+  if (ledState == LOW) { //clear when green LED off
+    digitalWrite(buzzer, LOW);
+    digitalWrite(LED_R, LOW);
+    lcd.clear();
+  }
+  if (millis() -lastTimeButtonChange >= debounceDur) {
+    byte buttonState = digitalRead(button);
+    if (buttonState != lastButtonState) {
+      lastTimeButtonChange = millis();
+      lastButtonState = buttonState;
+      if (buttonState == LOW) {
+        if(ledState == HIGH) {
+          ledState = LOW;
+        }
+        else {
+          ledState = HIGH;
+        }
+        digitalWrite(LED_G, ledState);
+        delay(3000);
+
+        while (ledState == HIGH) { // activate ultrasonic sensor when green LED on
+          digitalWrite(trigger, LOW);
+          delayMicroseconds(2);
+
+          // Sets the trigPin on HIGH state for 10 micro seconds
+          digitalWrite(trigger, HIGH);
+          delayMicroseconds(10);
+          digitalWrite(trigger, LOW);
+
+          // Reads the echoPin, returns the sound wave travel time in microseconds
+          duration = pulseIn(echo, HIGH);
+
+          // Calculating the distance
+          dis = duration*0.035/2;
+          safeDis = dis;
+          if (safeDis <= 5){ // activate alarm when sensor triggered
+            delay(1000); // short delay to allow to turn off alarm
+            digitalWrite(buzzer, HIGH);
+            digitalWrite(LED_R, HIGH);
+            lcd.print("BURGLARY"); // LCD display for when somebody breaks in
+            Serial.println("Burglary");
+          }
+          
+          // Prints the distance on the Serial Monitor
+          Serial.print("Distance: ");
+          Serial.println(dis);
+
+          if (millis() -lastTimeButtonChange >= debounceDur) {
+            byte buttonState = digitalRead(button);
+            if (buttonState != lastButtonState) {
+              lastTimeButtonChange = millis();
+              lastButtonState = buttonState;
+              if (buttonState == LOW) {
+                if(ledState == HIGH) {
+                  ledState = LOW;
+                }
+                else {
+                  ledState = HIGH;
+                }
+                digitalWrite(LED_G, ledState); //change green LED's state
+              }
+            }
+          }
+        } 
+      }
+    }
+  }
+}
+
+void leakCheck() { 
+   
+  waterLvl = analogRead(waterPin); //Read data from analog pin and store it to waterLvl variable
+   
+  if (waterLvl<=150){ //check for water level
+    Serial.println("Water Level: Empty");
+    lcd.clear();
+    digitalWrite(LED_B, LOW); //reaction to water level
+    digitalWrite(buzzer, LOW);
+  } 
+  else if (waterLvl>150 && waterLvl<=275){ 
+    Serial.println("Water Level: Low");
+    lcd.clear();
+    digitalWrite(LED_B, LOW); 
+    digitalWrite(buzzer, LOW);
+  } 
+  else if (waterLvl>275 && waterLvl<=325){ 
+      Serial.println("Water Level: Medium"); 
+      lcd.clear();
+      digitalWrite(LED_B, HIGH);
+      digitalWrite(buzzer, LOW);
+  }
+  else if (waterLvl>325){ 
+    Serial.println("Water Level: High");
+    lcd.print("LEAK");
+    digitalWrite(LED_B, HIGH);
+    digitalWrite(buzzer, HIGH);
+
+  }
+  delay(100); 
+}
+
+void readKeypad() {
+  keypressed = myKeypad.getKey(); // get inputs from kepad
+  if (keypressed != '#') { // store inputs unless #
+    String key = String(keypressed);
+    pad += key;
+  }
+}
